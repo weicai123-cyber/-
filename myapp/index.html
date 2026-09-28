@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- 手机适配：禁止缩放导致的布局跳动，同时保留用户可缩放 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0e1116">
+<title>番茄钟</title>
+<style>
+/* ============================================================
+   基础样式：深色背景 + 圆角卡片 + 大按钮 + 手机适配
+   ============================================================ */
+:root{
+  --bg:        #0e1116;      /* 默认深色背景 */
+  --card:      rgba(24,28,36,.86);  /* 卡片半透明，方便透出背景图 */
+  --card-line: rgba(255,255,255,.08);
+  --text:      #e8ecf3;
+  --text-dim:  #8b95a7;
+  --accent:    #ff6b5a;      /* 工作阶段：珊瑚红 */
+  --short:     #2fd07f;      /* 短休息：绿 */
+  --long:      #4aa8ff;      /* 长休息：蓝 */
+  --radius:    22px;
+}
+
+*{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html,body{ height:100%; }
+
+body{
+  margin:0;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-height:100vh;
+  min-height:100dvh;   /* iOS Safari 上 100vh 比可视区高，会让卡片偏下；dvh 跟随地址栏 */
+  transition: background-color .3s;
+}
+
+/* ---------- 自定义背景图层（选取手机图片后显示） ---------- */
+#bgLayer{
+  position:fixed; inset:0; z-index:-2;
+  background-size:cover;
+  background-position:center;
+  background-repeat:no-repeat;
+  opacity:0;                      /* 没图片时完全透明 */
+  transition:opacity .35s;
+}
+#bgLayer.show{ opacity:1; }
+/* 背景图之上加一层黑色蒙版，保证卡片文字始终清晰可读 */
+#bgLayer::after{
+  content:"";
+  position:absolute; inset:0;
+  background: linear-gradient(180deg, rgba(6,8,12,.62), rgba(6,8,12,.78));
+}
+
+/* ---------- 主卡片 ---------- */
+.card{
+  width:100%;
+  max-width: 420px;
+  background: var(--card);
+  border: 1px solid var(--card-line);
+  border-radius: var(--radius);
+  padding: 22px 20px 20px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 18px 50px rgba(0,0,0,.45);
+}
+
+/* ---------- 顶部：阶段名 + 今日番茄数 ---------- */
+.top{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom: 6px;
+}
+.phase{
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing:.5px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.07);
+  color: var(--accent);
+  transition: color .3s, background .3s;
+}
+/* 不同阶段用不同颜色 */
+body[data-phase="short"] .phase{ color: var(--short); }
+body[data-phase="long"]  .phase{ color: var(--long); }
+
+.counter{
+  font-size: 14px;
+  color: var(--text-dim);
+  white-space:nowrap;
+}
+.counter b{ color: var(--text); font-size: 16px; }
+
+/* 本轮进度：第几个 / 共几个 */
+.cycle{
+  text-align:center;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  min-height: 16px;
+}
+
+/* ---------- 圆环 + 大号数字 ---------- */
+.dial{
+  position:relative;
+  width: min(78vw, 280px);
+  aspect-ratio: 1 / 1;
+  margin: 4px auto 6px;
+}
+.dial svg{ width:100%; height:100%; display:block; transform: rotate(-90deg); }
+.ring-bg{ fill:none; stroke: rgba(255,255,255,.07); stroke-width: 10; }
+.ring-fg{
+  fill:none;
+  stroke: var(--accent);
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke .3s, stroke-dashoffset .25s linear;
+}
+body[data-phase="short"] .ring-fg{ stroke: var(--short); }
+body[data-phase="long"]  .ring-fg{ stroke: var(--long); }
+
+.dial-center{
+  position:absolute; inset:0;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  gap:6px;
+}
+/* 大号数字：等宽数字避免每秒跳动时宽度抖动 */
+#time{
+  font-size: clamp(52px, 17vw, 68px);
+  font-weight: 700;
+  line-height:1;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+#hint{
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+}
+
+/* ---------- 按钮区 ---------- */
+.actions{
+  display:grid;
+  /* 开始按钮单独占一行，暂停/重置/跳过 正好三等分，不留半行空缺 */
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 18px;
+}
+button{
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  background: rgba(255,255,255,.08);
+  border: 1px solid var(--card-line);
+  border-radius: 16px;
+  padding: 16px 12px;               /* 大触摸目标 */
+  cursor: pointer;
+  transition: transform .08s, background .2s, opacity .2s;
+  user-select:none;
+}
+button:active{ transform: scale(.97); }
+button:disabled{ opacity:.35; cursor:not-allowed; }
+/* 主按钮：开始 / 继续 */
+#btnStart{
+  grid-column: 1 / -1;
+  background: var(--accent);
+  border-color: transparent;
+  color:#1a0f0d;
+  font-size: 19px;
+  padding: 18px 12px;
+}
+body[data-phase="short"] #btnStart{ background: var(--short); color:#04241a; }
+body[data-phase="long"]  #btnStart{ background: var(--long);  color:#04182b; }
+
+/* ---------- 设置面板 ---------- */
+.settings-toggle{
+  width:100%;
+  margin-top: 14px;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: transparent;
+}
+/* 底部抽屉：高度锁在 40vh 以内。
+   卡片是垂直居中的，圆环底边距视口顶端的距离 = (100vh - 卡片高)/2 + 362px，
+   解 (0.5 - 40%) * 100vh ≥ 55.5px 得 vh ≥ 555px 恒成立 ——
+   所以 40vh 在任何放得下整张卡片的屏幕上都不会压到圆环。 */
+#settings{
+  --sheet-gap: 10px;              /* 离屏幕底边的距离，让下面两个圆角露出来 */
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--sheet-gap) + env(safe-area-inset-bottom));
+  z-index: 20;
+  width: min(100%, 420px);       /* 与卡片同宽，宽屏上居中 */
+  max-height: 40vh;
+  max-height: 40dvh;             /* iOS 上 vh 比可视区高，用 dvh 兜住 */
+  overflow-y: auto;
+  overscroll-behavior: contain;  /* 抽屉内滚到底时不带着页面一起动 */
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 20px 20px;
+  background: #161a21;           /* 不透明：抽屉下方的内容不需要透出来 */
+  border: 1px solid var(--card-line);
+  border-radius: var(--radius);  /* 四角圆角 */
+  box-shadow: 0 10px 40px rgba(0,0,0,.5);
+  /* 深色滚动条：默认那条白色的在深色面板上太跳 */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.22) transparent;
+  /* 收起状态：整块推到屏幕下方之外（150% 足够走完自身高度 + 底边间距） */
+  transform: translate(-50%, 150%);
+  visibility: hidden;
+  transition: transform .28s ease, visibility 0s linear .28s;
+}
+#settings.open{
+  transform: translate(-50%, 0);
+  visibility: visible;
+  transition: transform .28s ease, visibility 0s;
+}
+/* WebKit（Chrome / Safari / Edge）的滚动条，Firefox 走上面的 scrollbar-color */
+#settings::-webkit-scrollbar{ width: 8px; }
+#settings::-webkit-scrollbar-track{ background: transparent; }
+#settings::-webkit-scrollbar-thumb{
+  background: rgba(255,255,255,.18);
+  border-radius: 999px;
+}
+#settings::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,.3); }
+/* 顶部小横条，暗示这是可以收起的抽屉 */
+#settings::before{
+  content:"";
+  display:block;
+  width: 40px; height: 4px;
+  margin: 0 auto 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.18);
+}
+
+.field{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding: 9px 0;
+  font-size: 15px;
+}
+.field label{ color: var(--text-dim); }
+.field input[type="number"]{
+  width: 88px;
+  font-family: inherit;
+  font-size: 16px;
+  text-align:center;
+  color: var(--text);
+  background: rgba(255,255,255,.07);
+  border: 1px solid var(--card-line);
+  border-radius: 12px;
+  padding: 10px;
+  outline:none;
+}
+.field input[type="number"]:focus{ border-color: var(--accent); }
+/* 分 + 秒 并排：秒级精度后每个阶段用两个输入框 */
+.field .pair{ display:flex; align-items:center; gap:6px; }
+.field .pair i{ font-style:normal; font-size:13px; color:var(--text-dim); }
+.field .pair input[type="number"]{ width: 58px; padding: 10px 4px; }
+/* 取色器：原生控件默认是方形色块，去掉内边距和描边才能塞进圆角里 */
+.field input[type="color"]{
+  width: 52px;
+  height: 38px;
+  padding: 3px;
+  background: rgba(255,255,255,.07);
+  border: 1px solid var(--card-line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.field input[type="color"]::-webkit-color-swatch-wrapper{ padding: 0; }
+.field input[type="color"]::-webkit-color-swatch{ border: none; border-radius: 9px; }
+/* 颜色那一行的小按钮：比全局 button 的 16px 内边距小一圈 */
+.field .mini{ font-size: 14px; font-weight: 500; padding: 9px 14px; border-radius: 12px; }
+/* 开关 */
+.switch{ position:relative; width:52px; height:30px; flex:0 0 auto; }
+.switch input{ position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }
+.switch span{
+  position:absolute; inset:0;
+  background: rgba(255,255,255,.14);
+  border-radius: 999px;
+  transition: background .2s;
+  pointer-events:none;
+}
+.switch span::after{
+  content:""; position:absolute; top:3px; left:3px;
+  width:24px; height:24px; border-radius:50%;
+  background:#fff; transition: transform .2s;
+}
+.switch input:checked + span{ background: var(--accent); }
+.switch input:checked + span::after{ transform: translateX(22px); }
+
+/* 音量加减按钮。
+   之前这里是 input[type="range"]，但在部分安卓 WebView 上拖动时好时坏 ——
+   横向手势有时被判定成"滚动抽屉"，滑块刚动就被滚动手势抢走、弹回原位
+   （touch-action: pan-y 也压不住）。换成纯点击的加减按钮就没有手势歧义了，
+   而且触摸目标比 22px 的滑块圆头大得多。 */
+.field .pair.vol{ gap: 10px; flex: 0 0 auto; }
+.field .volbtn{
+  width: 44px;
+  height: 36px;
+  padding: 0;                      /* 覆盖全局 button 的 16px 内边距 */
+  font-size: 20px;
+  line-height: 1;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 百分比位数会变（9% → 100%），定个宽，免得两个按钮跟着左右跳 */
+.field .pair .val{ min-width: 46px; text-align: center; }
+
+.file-row{ display:flex; gap:10px; margin-top: 10px; }
+.file-row button{ flex:1; font-size:15px; padding:12px; }
+
+/* 隐藏原生 file 控件，用按钮触发 */
+#bgFile{ display:none; }
+
+.tip{
+  font-size: 12px;
+  line-height:1.7;
+  color: var(--text-dim);
+  margin-top: 12px;
+}
+
+/* ---------- 小屏（<=380px）微调 ---------- */
+@media (max-width: 380px){
+  .card{ padding: 18px 14px 16px; }
+  .actions{ gap: 8px; }
+  button{ font-size: 16px; padding: 14px 8px; }
+  .field{ font-size: 14px; }
+  #settings{ padding-left: 14px; padding-right: 14px; }
+}
+</style>
+</head>
+<body data-phase="work">
+
+<!-- 自定义背景图层 -->
+<div id="bgLayer"></div>
+
+<main class="card">
+
+  <!-- 顶部状态栏 -->
+  <div class="top">
+    <div class="phase" id="phaseLabel">工作中</div>
+    <div class="counter">今日番茄 <b id="todayCount">0</b> 🍅</div>
+  </div>
+  <div class="cycle" id="cycleLabel"></div>
+
+  <!-- 圆环进度 + 大号剩余时间 -->
+  <div class="dial">
+    <svg viewBox="0 0 240 240" aria-hidden="true">
+      <circle class="ring-bg" cx="120" cy="120" r="106"></circle>
+      <circle class="ring-fg" cx="120" cy="120" r="106" id="ring"></circle>
+    </svg>
+    <div class="dial-center">
+      <!-- aria-live 固定为 off：这里的数字每 250ms 就变一次，播报反而会吵到读屏用户 -->
+      <div id="time" aria-live="off">25:00</div>
+      <div id="hint">准备开始</div>
+    </div>
+  </div>
+
+  <!-- 操作按钮 -->
+  <div class="actions">
+    <button id="btnStart">开始</button>
+    <button id="btnPause" disabled>暂停</button>
+    <button id="btnReset">重置</button>
+    <button id="btnSkip">跳过</button>
+  </div>
+
+  <!-- 设置开关 -->
+  <button class="settings-toggle" id="btnSettings">⚙ 设置</button>
+
+</main>
+
+<!-- 设置面板：底部抽屉。
+     必须放在 .card 外面 —— .card 上的 backdrop-filter 会成为 fixed 定位的
+     包含块，留在里面的话 bottom:0 是相对卡片对齐，而不是屏幕底边 -->
+<section id="settings">
+  <div class="field">
+    <label for="inWork">工作时长</label>
+    <span class="pair">
+      <input type="number" id="inWork" min="0" max="180" step="1" inputmode="numeric" aria-label="工作时长 分">
+      <i>分</i>
+      <input type="number" id="inWorkSec" min="0" max="59" step="1" inputmode="numeric" aria-label="工作时长 秒">
+      <i>秒</i>
+    </span>
+  </div>
+  <div class="field">
+    <label for="inShort">短休息</label>
+    <span class="pair">
+      <input type="number" id="inShort" min="0" max="180" step="1" inputmode="numeric" aria-label="短休息 分">
+      <i>分</i>
+      <input type="number" id="inShortSec" min="0" max="59" step="1" inputmode="numeric" aria-label="短休息 秒">
+      <i>秒</i>
+    </span>
+  </div>
+  <div class="field">
+    <label for="inLong">长休息</label>
+    <span class="pair">
+      <input type="number" id="inLong" min="0" max="180" step="1" inputmode="numeric" aria-label="长休息 分">
+      <i>分</i>
+      <input type="number" id="inLongSec" min="0" max="59" step="1" inputmode="numeric" aria-label="长休息 秒">
+      <i>秒</i>
+    </span>
+  </div>
+  <div class="field">
+    <label for="inEvery">每几个番茄后长休息</label>
+    <input type="number" id="inEvery" min="1" max="12" step="1" inputmode="numeric">
+  </div>
+  <div class="field">
+    <label for="inSound">阶段结束提示音</label>
+    <span class="switch">
+      <input type="checkbox" id="inSound"><span></span>
+    </span>
+  </div>
+  <div class="field">
+    <label>提示音音量</label>
+    <span class="pair vol">
+      <button id="btnVolDown" class="volbtn" aria-label="音量减小 10%">−</button>
+      <i id="volumeVal" class="val">70%</i>
+      <button id="btnVolUp" class="volbtn" aria-label="音量增大 10%">+</button>
+    </span>
+  </div>
+  <div class="field">
+    <label for="inVibrate">阶段结束振动</label>
+    <span class="switch">
+      <input type="checkbox" id="inVibrate"><span></span>
+    </span>
+  </div>
+  <div class="field">
+    <label for="inAuto">自动开始下一阶段</label>
+    <span class="switch">
+      <input type="checkbox" id="inAuto"><span></span>
+    </span>
+  </div>
+
+  <!-- 自定义背景颜色：铺在页面底色上，和下面的背景图互不影响（图盖在色上面） -->
+  <div class="field">
+    <label for="inBgColor">背景颜色</label>
+    <span class="pair">
+      <input type="color" id="inBgColor" value="#0e1116">
+      <button id="btnClearColor" class="mini">默认</button>
+    </span>
+  </div>
+
+  <!-- 自定义背景：从手机相册/文件里选一张图 -->
+  <div class="file-row">
+    <button id="btnPickBg">选择背景图片</button>
+    <button id="btnClearBg">清除背景</button>
+  </div>
+  <input type="file" id="bgFile" accept="image/*">
+
+  <p class="tip">
+    图片仅在本地压缩后保存在浏览器里，不会上传到任何服务器。<br>
+    快捷键：空格 开始/暂停 · R 重置 · S 跳过
+  </p>
+</section>
+
+<script>
+"use strict";
+/* ============================================================
+   番茄钟 —— 纯原生实现，无外部库、无网络请求
+   时间计算全部基于 Date.now() 时间戳，切后台回来也不会走偏
+   ============================================================ */
+
+/* ---------- 1. 常量与存储键 ---------- */
+const KEY_SETTINGS = "pomodoro.settings.v1";
+const KEY_STATS    = "pomodoro.stats.v1";   // 今日番茄数
+const KEY_BG       = "pomodoro.bg.v1";      // 背景图（压缩后的 dataURL）
+const KEY_BG_COLOR = "pomodoro.bgcolor.v1"; // 自定义背景色
+const KEY_SESSION  = "pomodoro.session.v1"; // 计时状态，刷新/杀进程后用来恢复
+
+/* 背景色没设置时的底色，与 CSS 里 --bg 保持一致（取色器需要一个具体值） */
+const DEFAULT_BG_COLOR = "#0e1116";
+
+const DEFAULTS = {
+  work: 25,        // 工作时长（分）
+  workSec: 0,      // 工作时长（秒，0~59）
+  short: 5,        // 短休息（分）
+  shortSec: 0,     // 短休息（秒）
+  long: 15,        // 长休息（分）
+  longSec: 0,      // 长休息（秒）
+  longEvery: 4,    // 每完成几个番茄进入长休息
+  sound: true,     // 提示音开关
+  volume: 70,      // 提示音音量（0~100 的整数，和 clampNum 的取整对齐）
+  vibrate: true,   // 振动开关（和提示音相互独立）
+  autoStart: true  // 阶段结束后是否自动开始下一阶段
+};
+
+const PHASE_NAME = { work: "工作中", short: "短休息", long: "长休息" };
+
+/* ---------- 2. DOM 引用 ---------- */
+const $ = (id) => document.getElementById(id);
+const el = {
+  time:      $("time"),
+  hint:      $("hint"),
+  phase:     $("phaseLabel"),
+  today:     $("todayCount"),
+  cycle:     $("cycleLabel"),
+  ring:      $("ring"),
+  btnStart:  $("btnStart"),
+  btnPause:  $("btnPause"),
+  btnReset:  $("btnReset"),
+  btnSkip:   $("btnSkip"),
+  settings:  $("settings"),
+  btnSet:    $("btnSettings"),
+  inWork:    $("inWork"),
+  inWorkSec: $("inWorkSec"),
+  inShort:   $("inShort"),
+  inShortSec:$("inShortSec"),
+  inLong:    $("inLong"),
+  inLongSec: $("inLongSec"),
+  inEvery:   $("inEvery"),
+  inSound:   $("inSound"),
+  volumeVal: $("volumeVal"),
+  btnVolDown:$("btnVolDown"),
+  btnVolUp:  $("btnVolUp"),
+  inVibrate: $("inVibrate"),
+  inAuto:    $("inAuto"),
+  inBgColor:    $("inBgColor"),
+  btnClearColor:$("btnClearColor"),
+  bgFile:    $("bgFile"),
+  btnPickBg: $("btnPickBg"),
+  btnClearBg:$("btnClearBg"),
+  bgLayer:   $("bgLayer")
+};
+
+/* ---------- 3. 运行时状态 ---------- */
+let settings = loadSettings();
+let phase    = "work";      // work | short | long
+let running  = false;       // 是否正在倒计时
+let endTime  = 0;           // 本轮结束的时间戳（ms）
+let remainMs = (settings.work * 60 + settings.workSec) * 1000;  // 剩余毫秒
+let ticker   = null;        // setInterval 句柄
+let stats    = loadStats(); // { date, count }
+
+/* ============================================================
+   4. 本地存储读写（全部包 try/catch，隐私模式下也不会崩）
+   ============================================================ */
+function readJSON(key, fallback){
+  try{
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  }catch(e){
+    console.warn("读取本地存储失败：", key, e);
+    return fallback;
+  }
+}
+function writeJSON(key, value){
+  try{
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  }catch(e){
+    console.warn("写入本地存储失败：", key, e);
+    return false;
+  }
+}
+
+/* 设置：与默认值合并，并把数字夹在合理区间内 */
+function loadSettings(){
+  const s = Object.assign({}, DEFAULTS, readJSON(KEY_SETTINGS, {}));
+  // 分钟现在允许为 0（例如"0 分 30 秒"），时长为 0 由 phaseMs() 兜底
+  s.work      = clampNum(s.work, 0, 180, DEFAULTS.work);
+  s.workSec   = clampNum(s.workSec, 0, 59, 0);
+  s.short     = clampNum(s.short, 0, 180, DEFAULTS.short);
+  s.shortSec  = clampNum(s.shortSec, 0, 59, 0);
+  s.long      = clampNum(s.long, 0, 180, DEFAULTS.long);
+  s.longSec   = clampNum(s.longSec, 0, 59, 0);
+  s.longEvery = clampNum(s.longEvery, 1, 12, DEFAULTS.longEvery);
+  s.sound     = !!s.sound;
+  s.volume    = clampNum(s.volume, 0, 100, DEFAULTS.volume);
+  s.vibrate   = !!s.vibrate;
+  s.autoStart = !!s.autoStart;
+  return s;
+}
+function clampNum(v, min, max, dflt){
+  // Number("") 和 Number(" ") 都是 0，会被当成合法值夹到下限。
+  // 空输入框应该回落到默认值，而不是变成 1 分钟。
+  if(v === null || v === undefined) return dflt;
+  if(typeof v === "string" && v.trim() === "") return dflt;
+  const n = Number(v);
+  if(!Number.isFinite(n)) return dflt;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+/* 今日日期字符串，用于判断是否跨天 */
+function todayStr(){
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+
+/* 统计：跨天自动清零 */
+function loadStats(){
+  const s = readJSON(KEY_STATS, null);
+  if(!s || s.date !== todayStr()) return { date: todayStr(), count: 0 };
+  return { date: s.date, count: Number(s.count) || 0 };
+}
+
+/* 页面一直开着跨过午夜时也要清零一次：loadStats 只在页面加载时跑，
+   不然第二天完成的第一个番茄会把昨天的计数一起带进今天 */
+function rolloverStats(){
+  const t = todayStr();
+  if(stats.date !== t){ stats.date = t; stats.count = 0; }
+}
+
+/* ============================================================
+   5. 阶段时长与切换
+   ============================================================ */
+/* 每个阶段的完整时长（秒）= 分 × 60 + 秒 */
+function phaseSeconds(p){
+  if(p === "work")  return settings.work  * 60 + settings.workSec;
+  if(p === "short") return settings.short * 60 + settings.shortSec;
+  return settings.long * 60 + settings.longSec;
+}
+/* 兜底最少 1 秒：用户把分和秒都填 0 时，计时器不能一进去就结束 */
+function phaseMs(p){ return Math.max(1, phaseSeconds(p)) * 1000; }
+
+/* 决定"下一个阶段"是谁：
+   工作结束 → 完成的番茄数能被 longEvery 整除就走长休息，否则短休息
+   休息结束 → 回到工作 */
+function nextPhase(fromPhase, countAfterFinish){
+  if(fromPhase !== "work") return "work";
+  return (countAfterFinish % settings.longEvery === 0) ? "long" : "short";
+}
+
+/* 切换到某个阶段，并把剩余时间重置为该阶段的完整时长 */
+function setPhase(p, autostart){
+  // 先无条件停掉旧的计时器：否则 startTimer() 会因为 running 还是 true 而直接
+  // 返回，endTime 没更新，下一个 tick 就把时间瞬间拽回旧值
+  clearInterval(ticker);
+  ticker = null;
+  running = false;
+
+  phase = p;
+  remainMs = phaseMs(p);
+  document.body.dataset.phase = p;
+  if(autostart) startTimer();
+  else          saveSession();
+  render();
+}
+
+/* ============================================================
+   6. 计时核心
+   ============================================================ */
+function startTimer(){
+  if(running) return;
+  running = true;
+  endTime = Date.now() + remainMs;
+  // 250ms 刷新一次，秒数变化足够跟手，也不会太耗电
+  ticker = setInterval(tick, 250);
+  saveSession();
+  render();
+}
+
+function stopTimer(){
+  if(!running) return;
+  // 暂停：把还剩多久算出来存着，恢复时接着走
+  remainMs = Math.max(0, endTime - Date.now());
+  running = false;
+  clearInterval(ticker);
+  ticker = null;
+  saveSession();
+  render();
+}
+
+function toggleTimer(){
+  if(running) stopTimer();
+  else        startTimer();
+}
+
+function tick(){
+  remainMs = endTime - Date.now();
+  if(remainMs <= 0){
+    remainMs = 0;
+    render();
+    finishPhase();
+    return;
+  }
+  render();
+}
+
+/* 重置当前阶段（不清空今日番茄数） */
+function resetPhase(){
+  stopTimer();                     // 正在跑的话先把剩余时间结算掉
+  remainMs = phaseMs(phase);       // 再覆盖成完整时长
+  saveSession();
+  render();
+}
+
+/* 阶段正常走完。
+   quiet = true 用于"从后台恢复时发现这一轮早就该结束了"：不响铃不振动，
+   也不自动开始下一轮，交给用户自己按开始 */
+function finishPhase(quiet){
+  clearInterval(ticker);
+  ticker = null;
+  running = false;
+
+  const finished = phase;
+
+  if(finished === "work"){
+    // 完成一个番茄 → 今日计数 +1 并落盘（跨天先清零，避免把昨天的数带进今天）
+    rolloverStats();
+    stats.count += 1;
+    writeJSON(KEY_STATS, stats);
+    if(!quiet) playChime("work");
+  }else if(!quiet){
+    playChime("break");
+  }
+  if(!quiet) vibrate(finished === "work" ? [120, 80, 120] : [200]);
+
+  // 进入下一阶段（默认自动开始）
+  const p = nextPhase(finished, stats.count);
+  setPhase(p, quiet ? false : settings.autoStart);
+}
+
+/* 跳过当前阶段：不增加今日番茄数，直接进下一阶段。
+   跳过"工作"不算完成，所以只给短休息 —— 否则等于白送一次长休息，
+   而且因为计数没涨，下一轮真正完成时又会满足整除条件，连着来两次 */
+function skipPhase(){
+  clearInterval(ticker);
+  ticker = null;
+  running = false;
+  setPhase(phase === "work" ? "short" : "work", settings.autoStart);
+}
+
+/* ============================================================
+   7. 渲染
+   ============================================================ */
+const RING_LEN = 2 * Math.PI * 106;   // 圆环周长，与 SVG 里的 r 对应
+
+function render(){
+  rolloverStats();   // 页面一直开着跨过午夜时，今日计数要跟着归零
+  const total = phaseMs(phase);
+  const left  = Math.max(0, remainMs);
+  const secs  = Math.ceil(left / 1000);
+
+  const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+  const ss = String(secs % 60).padStart(2, "0");
+  const text = mm + ":" + ss;
+
+  el.time.textContent = text;
+  document.title = (running ? "" : "⏸ ") + text + " · " + PHASE_NAME[phase];
+
+  // 圆环进度：走完的比例
+  const ratio = total > 0 ? (1 - left / total) : 0;
+  el.ring.style.strokeDasharray  = RING_LEN;
+  el.ring.style.strokeDashoffset = RING_LEN * (1 - ratio);
+
+  // 顶部信息
+  el.phase.textContent = PHASE_NAME[phase];
+  el.today.textContent = stats.count;
+
+  if(phase === "work"){
+    const done = stats.count % settings.longEvery;      // 本轮已完成几个
+    el.cycle.textContent = "本轮进度 " + done + " / " + settings.longEvery +
+                           "（再完成 " + (settings.longEvery - done) + " 个进入长休息）";
+  }else{
+    el.cycle.textContent = phase === "long" ? "长休息 · 好好放松一下" : "短休息 · 起来动一动";
+  }
+
+  // 提示文案与按钮状态
+  el.hint.textContent = running ? "专注中…" : (left === total ? "准备开始" : "已暂停");
+  el.btnStart.textContent = running ? "进行中" : (left === total ? "开始" : "继续");
+  el.btnStart.disabled = running;
+  el.btnPause.disabled = !running;
+}
+
+/* ============================================================
+   8. 提示音（Web Audio 合成，不需要任何音频文件）
+   ============================================================ */
+let audioCtx = null;
+function getAudioCtx(){
+  try{
+    if(!audioCtx){
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return null;
+      audioCtx = new AC();
+    }
+    // 手机浏览器要求用户交互后才能出声，这里顺手恢复一下
+    if(audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }catch(e){
+    return null;
+  }
+}
+
+/* 播放一串音符：[频率Hz, 起始秒, 持续秒] */
+function playNotes(notes){
+  if(!settings.sound) return;
+  const vol = settings.volume / 100;
+  if(vol <= 0) return;                     // 音量拉到 0 就别起振了
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  const t0 = ctx.currentTime + 0.02;
+  const peak = 0.32 * vol;                 // 0.32 是原来写死的峰值，现在按音量缩放
+
+  notes.forEach(function(n){
+    const freq = n[0], start = n[1], dur = n[2];
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+
+    // 简单的淡入淡出包络，避免"咔"的爆音
+    gain.gain.setValueAtTime(0.0001, t0 + start);
+    gain.gain.exponentialRampToValueAtTime(peak, t0 + start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + start + dur);
+
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0 + start);
+    osc.stop(t0 + start + dur + 0.05);
+  });
+}
+
+function playChime(kind){
+  if(kind === "work"){
+    // 工作结束：三声上行，比较"提神"
+    playNotes([[880,0,.16],[1108,.16,.16],[1318,.34,.34]]);
+  }else{
+    // 休息结束：两声下行，提醒回来干活
+    playNotes([[740,0,.16],[587,.17,.32]]);
+  }
+}
+
+/* 有振动马达的设备顺便振一下。
+   用独立的 settings.vibrate 判断：关掉提示音只是想安静，不该连振动一起没了 */
+function vibrate(pattern){
+  if(!settings.vibrate) return;
+  if(navigator.vibrate) navigator.vibrate(pattern);
+}
+
+/* ============================================================
+   9. 设置面板交互
+   ============================================================ */
+function syncSettingsUI(){
+  el.inWork.value    = settings.work;
+  el.inWorkSec.value = settings.workSec;
+  el.inShort.value   = settings.short;
+  el.inShortSec.value= settings.shortSec;
+  el.inLong.value    = settings.long;
+  el.inLongSec.value = settings.longSec;
+  el.inEvery.value   = settings.longEvery;
+  el.inSound.checked = settings.sound;
+  syncVolumeUI();
+  el.inVibrate.checked = settings.vibrate;
+  el.inAuto.checked  = settings.autoStart;
+
+  // 取色器只认 #rrggbb，没设置过就回落到默认底色
+  const c = readJSON(KEY_BG_COLOR, null);
+  el.inBgColor.value = isValidColor(c) ? c : DEFAULT_BG_COLOR;
+}
+
+/* 取色器给的一定是 #rrggbb，但从 localStorage 读回来的东西不能信 */
+function isValidColor(c){
+  return typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c);
+}
+
+/* 读取输入框 → 写回 settings，并保存 */
+function applySettingsFromUI(){
+  const oldFull = phaseMs(phase);   // 改之前的完整时长，用来判断"这一轮有没有开始过"
+
+  settings.work      = clampNum(el.inWork.value,     0, 180, DEFAULTS.work);
+  settings.workSec   = clampNum(el.inWorkSec.value,  0, 59,  0);
+  settings.short     = clampNum(el.inShort.value,    0, 180, DEFAULTS.short);
+  settings.shortSec  = clampNum(el.inShortSec.value, 0, 59,  0);
+  settings.long      = clampNum(el.inLong.value,     0, 180, DEFAULTS.long);
+  settings.longSec   = clampNum(el.inLongSec.value,  0, 59,  0);
+  settings.longEvery = clampNum(el.inEvery.value,    1, 12,  DEFAULTS.longEvery);
+  writeJSON(KEY_SETTINGS, settings);
+
+  // 没在倒计时的时候改时长：
+  //   本轮还没开始（剩余 == 旧完整时长）→ 直接换成新时长
+  //   已经跑了一部分再暂停的      → 保留进度，只是不超过新的完整时长
+  // （正在跑的话不打断，等这一轮结束自然生效）
+  if(!running){
+    const newFull = phaseMs(phase);
+    remainMs = (remainMs >= oldFull) ? newFull : Math.min(remainMs, newFull);
+    saveSession();
+  }
+  syncSettingsUI();
+  render();
+}
+
+function closeSettings(){
+  el.settings.classList.remove("open");
+}
+
+el.btnSet.addEventListener("click", function(){
+  const opening = !el.settings.classList.contains("open");
+  el.settings.classList.toggle("open");
+  // 打开设置面板时立刻暂停：改时长的时候计时器还在跑，剩下多少秒根本看不清。
+  // 这里不自动恢复，用户关掉面板后自己按"继续"。
+  if(opening) stopTimer();
+});
+
+/* 点抽屉以外的地方就收起来（bottom sheet 的惯例）。
+   ⚙ 按钮自己会 toggle，这里跳过它 —— 不然一次点击会被开完又被这里关掉 */
+document.addEventListener("click", function(e){
+  if(!el.settings.classList.contains("open")) return;
+  if(el.settings.contains(e.target) || el.btnSet.contains(e.target)) return;
+  closeSettings();
+});
+
+[el.inWork, el.inWorkSec, el.inShort, el.inShortSec,
+ el.inLong, el.inLongSec, el.inEvery].forEach(function(input){
+  input.addEventListener("change", applySettingsFromUI);
+  input.addEventListener("blur",   applySettingsFromUI);
+});
+
+el.inSound.addEventListener("change", function(){
+  settings.sound = el.inSound.checked;
+  writeJSON(KEY_SETTINGS, settings);
+  if(settings.sound) playChime("break");   // 打开时试听一下
+});
+
+/* 音量加减按钮：每次 10%，夹在 0~100。
+   （原来这里是 input[type="range"]，部分安卓 WebView 上拖动时好时坏，已弃用） */
+const VOLUME_STEP = 10;
+
+/* 音量的显示与上下限状态：0% 时禁用"−"，100% 时禁用"+" */
+function syncVolumeUI(){
+  el.volumeVal.textContent = settings.volume + "%";
+  el.btnVolDown.disabled = settings.volume <= 0;
+  el.btnVolUp.disabled   = settings.volume >= 100;
+}
+
+let lastVolPreview = 0;
+
+/* 试听一声。连点"+"时不要叠出一串声音，150ms 内只响一次。
+   playNotes() 自己会在关掉提示音或音量为 0 时静默返回，正好当反馈 */
+function previewVolume(){
+  const now = Date.now();
+  if(now - lastVolPreview < 150) return;
+  lastVolPreview = now;
+  playNotes([[880, 0, .12]]);   // 短短一声，够听清音量就行
+}
+
+function setVolume(next){
+  settings.volume = clampNum(next, 0, 100, DEFAULTS.volume);
+  writeJSON(KEY_SETTINGS, settings);
+  syncVolumeUI();
+  previewVolume();
+}
+
+el.btnVolUp.addEventListener("click", function(){
+  setVolume(settings.volume + VOLUME_STEP);
+});
+
+el.btnVolDown.addEventListener("click", function(){
+  setVolume(settings.volume - VOLUME_STEP);
+});
+
+el.inVibrate.addEventListener("change", function(){
+  settings.vibrate = el.inVibrate.checked;
+  writeJSON(KEY_SETTINGS, settings);
+  if(settings.vibrate) vibrate([60]);   // 打开时试一下，方便确认设备支不支持
+});
+
+el.inAuto.addEventListener("change", function(){
+  settings.autoStart = el.inAuto.checked;
+  writeJSON(KEY_SETTINGS, settings);
+});
+
+/* ============================================================
+   10. 自定义背景颜色
+       写在 body 的内联样式上，清空后自动回落到 CSS 里的 --bg。
+       和背景图是两层：颜色是底色，图片盖在它上面，两者可同时生效
+   ============================================================ */
+function applyBgColor(color){
+  document.body.style.backgroundColor = color || "";
+}
+
+/* color 为空表示恢复默认：清掉存储和取色器的值 */
+function setBgColor(color){
+  if(color){
+    writeJSON(KEY_BG_COLOR, color);
+  }else{
+    try{ localStorage.removeItem(KEY_BG_COLOR); }catch(e){}
+  }
+  applyBgColor(color);
+  el.inBgColor.value = color || DEFAULT_BG_COLOR;
+}
+
+/* 拖动取色器时实时预览（不落盘），松手后才写 localStorage */
+el.inBgColor.addEventListener("input",  function(){ applyBgColor(el.inBgColor.value); });
+el.inBgColor.addEventListener("change", function(){ setBgColor(el.inBgColor.value); });
+el.btnClearColor.addEventListener("click", function(){ setBgColor(""); });
+
+/* ============================================================
+   10b. 自定义背景图片
+       —— 从手机相册选图 → 压缩 → 存 localStorage（纯本地，不联网）
+   ============================================================ */
+function applyBackground(dataUrl){
+  if(dataUrl){
+    el.bgLayer.style.backgroundImage = "url('" + dataUrl + "')";
+    el.bgLayer.classList.add("show");
+  }else{
+    el.bgLayer.style.backgroundImage = "";
+    el.bgLayer.classList.remove("show");
+  }
+}
+
+el.btnPickBg.addEventListener("click", function(){
+  el.bgFile.click();     // 触发隐藏的 file 控件
+});
+
+el.bgFile.addEventListener("change", function(){
+  const file = el.bgFile.files && el.bgFile.files[0];
+  if(!file) return;
+
+  // 成功失败都要清空，否则用户再选同一张图不会触发 change，看起来像没反应
+  const done = function(){ el.bgFile.value = ""; };
+
+  const reader = new FileReader();
+  reader.onload = function(){
+    const img = new Image();
+    img.onload = function(){
+      // 压缩：长边限制到 1280px、JPEG 质量 0.72
+      // 这样一张手机照片通常只有 100~300KB，能塞进 localStorage
+      const MAX = 1280;
+      let w = img.width, h = img.height;
+      if(w > h && w > MAX){ h = Math.round(h * MAX / w); w = MAX; }
+      else if(h >= w && h > MAX){ w = Math.round(w * MAX / h); h = MAX; }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+
+      let dataUrl;
+      try{
+        dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+      }catch(e){
+        alert("这张图片无法处理，换一张试试。");
+        done();
+        return;
+      }
+
+      if(writeJSON(KEY_BG, dataUrl)){
+        applyBackground(dataUrl);
+      }else{
+        // 大多数情况是 localStorage 超配额
+        alert("图片太大，浏览器存不下了。\n请换一张小一点的图片。");
+      }
+      done();
+    };
+    img.onerror = function(){ alert("图片读取失败，换一张试试。"); done(); };
+    img.src = reader.result;
+  };
+  reader.onerror = function(){ alert("图片读取失败，换一张试试。"); done(); };
+  reader.readAsDataURL(file);
+});
+
+el.btnClearBg.addEventListener("click", function(){
+  try{ localStorage.removeItem(KEY_BG); }catch(e){}
+  applyBackground(null);
+});
+
+/* 启动时恢复上次选的背景 */
+(function restoreBackground(){
+  const saved = readJSON(KEY_BG, null);
+  if(typeof saved === "string" && saved.indexOf("data:image") === 0){
+    applyBackground(saved);
+  }
+})();
+
+/* 启动时恢复上次选的背景色（取色器的值交给 syncSettingsUI 回填） */
+(function restoreBgColor(){
+  const saved = readJSON(KEY_BG_COLOR, null);
+  if(isValidColor(saved)) applyBgColor(saved);
+})();
+
+/* ============================================================
+   11. 按钮与快捷键绑定
+   ============================================================ */
+el.btnStart.addEventListener("click", function(){ getAudioCtx(); startTimer(); });
+el.btnPause.addEventListener("click", stopTimer);
+el.btnReset.addEventListener("click", resetPhase);
+el.btnSkip .addEventListener("click", skipPhase);
+
+document.addEventListener("keydown", function(e){
+  // 在输入框里打字时不触发快捷键
+  const tag = (e.target.tagName || "").toLowerCase();
+  if(tag === "input" || tag === "textarea") return;
+
+  // 焦点在按钮上时交给按钮自己处理：否则 Tab 到"重置"再按空格会被 preventDefault
+  // 拦掉，转而执行开始/暂停，键盘用户会按错
+  if(tag === "button") return;
+
+  // 长按会连续触发，只认第一次按下
+  if(e.repeat) return;
+
+  if(e.code === "Space"){ e.preventDefault(); toggleTimer(); }
+  else if(e.key === "r" || e.key === "R"){ resetPhase(); }
+  else if(e.key === "s" || e.key === "S"){ skipPhase(); }
+});
+
+/* 从后台切回来时立刻刷新一次，避免显示停在旧数字上 */
+document.addEventListener("visibilitychange", function(){
+  if(document.hidden){
+    saveSession();          // 手机切走随时可能被杀，这里比 beforeunload 可靠
+  }else{
+    rolloverStats();        // 可能已经跨天了
+    if(running) tick();
+    else render();
+  }
+});
+
+/* ============================================================
+   12. 计时状态落盘与恢复
+       刷新页面、或者手机把后台标签杀掉之后，倒计时能接着走
+   ============================================================ */
+function saveSession(){
+  writeJSON(KEY_SESSION, {
+    phase:    phase,
+    running:  running,
+    endTime:  endTime,
+    remainMs: remainMs
+  });
+}
+
+function restoreSession(){
+  const s = readJSON(KEY_SESSION, null);
+  if(!s || !PHASE_NAME[s.phase]) return false;
+
+  const savedEnd = Number(s.endTime);
+  const savedRem = Number(s.remainMs);
+  phase = s.phase;
+
+  if(s.running && Number.isFinite(savedEnd) && savedEnd > Date.now()){
+    // 离开的这段时间还在倒计时范围内 → 接着走
+    remainMs = savedEnd - Date.now();
+    return true;
+  }
+
+  if(s.running){
+    // 离开期间这一轮早就该结束了 → 按完成处理，但静默，且不自动开下一轮
+    remainMs = 0;
+    finishPhase(true);
+    return false;
+  }
+
+  // 上次是暂停状态 → 原样恢复，但剩余时间不能超过该阶段现在的完整时长
+  remainMs = (Number.isFinite(savedRem) && savedRem >= 0) ? savedRem : phaseMs(phase);
+  remainMs = Math.min(remainMs, phaseMs(phase));
+  return false;
+}
+
+/* 页面关掉前兜底落盘（番茄数在完成时已经存过，这里只是防止最后的暂停状态丢失） */
+window.addEventListener("beforeunload", function(){
+  writeJSON(KEY_STATS, stats);
+  saveSession();
+});
+
+/* ============================================================
+   13. 初始化
+   ============================================================ */
+(function init(){
+  const resume = restoreSession();   // 先恢复上次的状态（会改 phase / remainMs）
+  syncSettingsUI();
+  document.body.dataset.phase = phase;
+  if(!resume) remainMs = Math.min(remainMs, phaseMs(phase));
+  render();
+  if(resume) startTimer();           // 恢复出一个"正在倒计时"的状态
+})();
+</script>
+</body>
+</html>

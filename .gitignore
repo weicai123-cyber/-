@@ -1,0 +1,25 @@
+# ============ 构建环境：体积巨大，且含第三方签名密钥，绝不入库 ============
+# 注意 node_modules 不是普通的依赖目录：
+#   node_modules/hbh-web2app/Templates/webview.zip 里打包了该包作者的签名密钥
+#   KeyStore/HBH 和明文口令（app/build.gradle 里的 storePassword/keyPassword）。
+#   提交它等于替第三方分发签名密钥，任何人都能用它签出冒充这个模板的 APK。
+node_modules/
+android-sdk/
+.gradle-home/
+
+# Gradle 发行包 131MB，超过 GitHub 单文件 100MB 上限，push 会被服务端直接拒绝。
+# 它是 get-gradle.js 从国内镜像下载的，不需要入库。
+apkbuild/gradle-8.13-bin.zip
+
+# ============ 构建产物 ============
+apkbuild/output/
+
+# ============ 改动前的旧版页面 ============
+# 根目录这份是加"分/秒输入框、取色器、音量按钮"之前的版本，
+# 和 myapp/index.html 重复，留着容易搞混。要一起留档就把下面这行删掉。
+/index.html
+
+# ============ 临时文件与系统垃圾 ============
+*.log
+.DS_Store
+Thumbs.db
